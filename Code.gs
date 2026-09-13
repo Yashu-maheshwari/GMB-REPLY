@@ -70,7 +70,12 @@ function fetchLatestReviews(accountId, locationPath) {
 }
 
 function generateReply(review, location, apiKey, model) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  // Handle the model string correctly regardless of whether it already includes 'models/'
+  let formattedModel = model;
+  if (!formattedModel.startsWith('models/')) {
+    formattedModel = 'models/' + formattedModel;
+  }
+  const url = `https://generativelanguage.googleapis.com/v1beta/${formattedModel}:generateContent?key=${apiKey}`;
   const starMap = { 'ONE': 1, 'TWO': 2, 'THREE': 3, 'FOUR': 4, 'FIVE': 5 };
   const stars = starMap[review.starRating] || 5;
   const reviewText = review.comment || 'No text provided.';
