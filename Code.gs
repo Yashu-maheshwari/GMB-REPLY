@@ -70,11 +70,14 @@ function fetchLatestReviews(accountId, locationPath) {
 }
 
 function generateReply(review, location, apiKey, model) {
-  // Handle the model string correctly regardless of whether it already includes 'models/'
-  let formattedModel = model;
+  // Default to the stable latest flash model if not defined in properties
+  let formattedModel = model || 'gemini-1.5-flash-latest';
+  
+  // Ensure the model string is prefixed correctly for the v1beta endpoint
   if (!formattedModel.startsWith('models/')) {
     formattedModel = 'models/' + formattedModel;
   }
+  
   const url = `https://generativelanguage.googleapis.com/v1beta/${formattedModel}:generateContent?key=${apiKey}`;
   const starMap = { 'ONE': 1, 'TWO': 2, 'THREE': 3, 'FOUR': 4, 'FIVE': 5 };
   const stars = starMap[review.starRating] || 5;
