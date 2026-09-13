@@ -55,6 +55,8 @@ function checkNewReviews() {
           Logger.log(`Successfully replied to review ${review.reviewId}`);
         }
       }
+      // Added 4-second delay to prevent Google Free Tier Rate Limit (HTTP 429)
+      Utilities.sleep(4000);
     }
   }
 }
