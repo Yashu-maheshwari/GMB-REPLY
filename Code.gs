@@ -248,3 +248,43 @@ function resetAllLastProcessedReviewIds() {
     Logger.log('MULTI_LOCATION_CONFIG not found. Cannot reset review IDs.');
   }
 }
+
+/**
+ * One-time execution function to automatically inject the correct configuration
+ * into PropertiesService for multi-location AI generation.
+ */
+function setupEnvironmentProperties() {
+  const config = [
+    {
+      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/AME_BAZAAR_LOCATION_ID",
+      "businessName": "AME Bazaar",
+      "businessType": "Retail Garment Store",
+      "seoKeywords": ["AME Bazaar", "Family Garments Store in Kirari", "best quality affordable clothes"],
+      "supportNumber": "9953569533"
+    },
+    {
+      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/LAW_FIRM_LOCATION_ID",
+      "businessName": "Maheshwari Counsel | Advocates & Legal Consultants",
+      "businessType": "Law Firm",
+      "seoKeywords": ["Maheshwari Counsel", "Advocates in Delhi", "Legal Consultants", "civil and criminal lawyer"],
+      "supportNumber": "YOUR_LAW_PRACTICE_NUMBER"
+    },
+    {
+      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/MOCK_LOCATION_3",
+      "businessName": "YOUR_BUSINESS_NAME_3",
+      "businessType": "YOUR_BUSINESS_TYPE_3",
+      "seoKeywords": ["keyword1", "keyword2"],
+      "supportNumber": "YOUR_SUPPORT_NUMBER_3"
+    },
+    {
+      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/MOCK_LOCATION_4",
+      "businessName": "YOUR_BUSINESS_NAME_4",
+      "businessType": "YOUR_BUSINESS_TYPE_4",
+      "seoKeywords": ["keyword3", "keyword4"],
+      "supportNumber": "YOUR_SUPPORT_NUMBER_4"
+    }
+  ];
+  
+  PropertiesService.getScriptProperties().setProperty('MULTI_LOCATION_CONFIG', JSON.stringify(config));
+  Logger.log('Environment configuration successfully injected into PropertiesService!');
+}
