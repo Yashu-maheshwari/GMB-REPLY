@@ -256,28 +256,28 @@ function resetAllLastProcessedReviewIds() {
 function setupEnvironmentProperties() {
   const config = [
     {
-      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/AME_BAZAAR_ID",
+      "locationPath": "locations/16134813121256220692",
       "businessName": "AME Bazaar",
       "businessType": "Retail Garment Store",
       "seoKeywords": ["AME Bazaar", "Family Garments Store in Kirari", "best quality affordable clothes"],
       "supportNumber": "9953569533"
     },
     {
-      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/LAW_FIRM_ID",
+      "locationPath": "locations/1571247269233718336",
       "businessName": "Maheshwari Counsel | Advocates & Legal Consultants",
       "businessType": "Law Firm",
       "seoKeywords": ["Maheshwari Counsel", "Advocates in Delhi", "Legal Consultants", "civil and criminal lawyer"],
       "supportNumber": "YOUR_LAW_PRACTICE_NUMBER"
     },
     {
-      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/ADVAITH_ID",
+      "locationPath": "locations/12195894669850420443",
       "businessName": "Advaith Educational Centre",
       "businessType": "Educational Coaching Institute",
       "seoKeywords": ["Advaith Educational Centre", "best coaching institute in Kirari", "tuition classes Delhi", "top educational center"],
       "supportNumber": "YOUR_ADVAITH_NUMBER"
     },
     {
-      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/SIS_SCHOOL_ID",
+      "locationPath": "locations/4069269303360601513",
       "businessName": "SIS",
       "businessType": "School / Educational Institution",
       "seoKeywords": ["SIS School", "best school in Kirari", "quality education Delhi", "top school admission"],
