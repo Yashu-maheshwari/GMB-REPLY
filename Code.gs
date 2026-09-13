@@ -1,85 +1,114 @@
 // Code.gs
 
 /**
- * Configuration variables.
- * Replace these with your actual details.
+ * Fallback Mock Configuration for Multiple Locations.
+ * 
+ * If 'MULTI_LOCATION_CONFIG' is not found in Script Properties, 
+ * this mock array will be used and saved to Script Properties for you to edit.
  */
-const CONFIG = {
-  // Your Google Business Profile Account ID and Location ID.
-  // Format: accounts/{accountId}/locations/{locationId}
-  LOCATION_NAME: 'accounts/YOUR_ACCOUNT_ID/locations/YOUR_LOCATION_ID',
-  
-  // Your Gemini API Key
-  GEMINI_API_KEY: 'YOUR_GEMINI_API_KEY',
-  
-  // Gemini Model (e.g., gemini-1.5-pro or gemini-1.5-flash)
-  GEMINI_MODEL: 'gemini-1.5-flash',
-  
-  // Support number for negative reviews
-  SUPPORT_NUMBER: '9953569533',
-};
+const DEFAULT_MULTI_LOCATION_CONFIG = [
+  {
+    "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/YOUR_LOCATION_ID_1",
+    "businessName": "AME Bazaar",
+    "businessType": "premium offline family garment retail store",
+    "seoKeywords": ["AME Bazaar", "Kirari, Delhi", "Family Garments Store", "Men's wear", "Women's wear", "Kids wear"],
+    "supportNumber": "9953569533"
+  },
+  {
+    "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/YOUR_LOCATION_ID_2",
+    "businessName": "AME Bazaar Branch 2",
+    "businessType": "premium clothing store",
+    "seoKeywords": ["AME Bazaar Branch 2", "Rohini, Delhi", "Fashion Retailer"],
+    "supportNumber": "9811000000"
+  }
+];
 
 /**
  * Main function to be triggered periodically (e.g., every hour).
  */
 function checkNewReviews() {
   const scriptProperties = PropertiesService.getScriptProperties();
-  const lastProcessedReviewId = scriptProperties.getProperty('LAST_PROCESSED_REVIEW_ID');
   
-  const reviews = fetchLatestReviews();
-  if (!reviews || reviews.length === 0) {
-    Logger.log('No reviews found.');
+  // 1. Get or initialize the MULTI_LOCATION_CONFIG
+  let configString = scriptProperties.getProperty('MULTI_LOCATION_CONFIG');
+  if (!configString) {
+    Logger.log('MULTI_LOCATION_CONFIG not found in Script Properties. Initializing with default mock data.');
+    configString = JSON.stringify(DEFAULT_MULTI_LOCATION_CONFIG);
+    scriptProperties.setProperty('MULTI_LOCATION_CONFIG', configString);
+  }
+  
+  const locations = JSON.parse(configString);
+  
+  // 2. Get Gemini API Key
+  const geminiApiKey = scriptProperties.getProperty('GEMINI_API_KEY');
+  if (!geminiApiKey) {
+    Logger.log('ERROR: GEMINI_API_KEY not found in Script Properties. Please add it.');
     return;
   }
-
-  // Find new reviews by comparing against the last processed review ID
-  let newReviewsToProcess = [];
   
-  for (let i = 0; i < reviews.length; i++) {
-    const review = reviews[i];
-    if (review.reviewId === lastProcessedReviewId) {
-      break; // Found the last processed, so everything before this in our array is new
-    }
-    // Only process if it doesn't already have a reply
-    if (!review.reviewReply || !review.reviewReply.comment) {
-        newReviewsToProcess.push(review);
-    }
-  }
+  const geminiModel = scriptProperties.getProperty('GEMINI_MODEL') || 'gemini-1.5-flash';
 
-  if (newReviewsToProcess.length === 0) {
-    Logger.log('No new reviews to process.');
-    return;
-  }
-
-  // Reverse so we process oldest first among the new ones
-  newReviewsToProcess = newReviewsToProcess.reverse();
-
-  for (const review of newReviewsToProcess) {
-    Logger.log(`Processing Review ID: ${review.reviewId} - Star Rating: ${review.starRating}`);
+  // 3. Loop through all locations
+  for (const location of locations) {
+    Logger.log(`\n--- Processing Location: ${location.businessName} (${location.locationPath}) ---`);
     
-    // Generate reply using Gemini
-    const replyText = generateReply(review);
+    const propKey = `LAST_PROCESSED_REVIEW_ID_${location.locationPath}`;
+    const lastProcessedReviewId = scriptProperties.getProperty(propKey);
     
-    if (replyText) {
-      // Post reply to GMB
-      const success = postReviewReply(review.name, replyText);
-      if (success) {
-        // Update last processed ID in script properties after successful reply
-        scriptProperties.setProperty('LAST_PROCESSED_REVIEW_ID', review.reviewId);
-        Logger.log(`Successfully replied to review ${review.reviewId}`);
+    const reviews = fetchLatestReviews(location.locationPath);
+    if (!reviews || reviews.length === 0) {
+      Logger.log('No reviews found for this location.');
+      continue;
+    }
+
+    // Find new reviews by comparing against the last processed review ID
+    let newReviewsToProcess = [];
+    
+    for (let i = 0; i < reviews.length; i++) {
+      const review = reviews[i];
+      if (review.reviewId === lastProcessedReviewId) {
+        break; // Found the last processed, so everything before this in our array is new
       }
-    } else {
-      Logger.log(`Failed to generate reply for review ${review.reviewId}`);
+      // Only process if it doesn't already have a reply
+      if (!review.reviewReply || !review.reviewReply.comment) {
+          newReviewsToProcess.push(review);
+      }
+    }
+
+    if (newReviewsToProcess.length === 0) {
+      Logger.log('No new reviews to process for this location.');
+      continue;
+    }
+
+    // Reverse so we process oldest first among the new ones
+    newReviewsToProcess = newReviewsToProcess.reverse();
+
+    for (const review of newReviewsToProcess) {
+      Logger.log(`Processing Review ID: ${review.reviewId} - Star Rating: ${review.starRating}`);
+      
+      // Generate reply using Gemini
+      const replyText = generateReply(review, location, geminiApiKey, geminiModel);
+      
+      if (replyText) {
+        // Post reply to GMB
+        const success = postReviewReply(review.name, replyText);
+        if (success) {
+          // Update last processed ID in script properties after successful reply
+          scriptProperties.setProperty(propKey, review.reviewId);
+          Logger.log(`Successfully replied to review ${review.reviewId}`);
+        }
+      } else {
+        Logger.log(`Failed to generate reply for review ${review.reviewId}`);
+      }
     }
   }
 }
 
 /**
- * Fetches the latest reviews from the Google Business Profile API.
+ * Fetches the latest reviews from the Google Business Profile API for a specific location.
  */
-function fetchLatestReviews() {
-  // mybusiness.googleapis.com/v4/accounts/{accountId}/locations/{locationId}/reviews
-  const url = `https://mybusiness.googleapis.com/v4/${CONFIG.LOCATION_NAME}/reviews`;
+function fetchLatestReviews(locationPath) {
+  const url = `https://mybusiness.googleapis.com/v4/${locationPath}/reviews`;
   const token = ScriptApp.getOAuthToken();
   
   const options = {
@@ -96,16 +125,16 @@ function fetchLatestReviews() {
   if (response.getResponseCode() === 200) {
     return json.reviews || [];
   } else {
-    Logger.log('Error fetching reviews: ' + response.getContentText());
+    Logger.log(`Error fetching reviews for ${locationPath}: ` + response.getContentText());
     return [];
   }
 }
 
 /**
- * Generates an SEO/AEO/GEO optimized reply using Gemini API.
+ * Generates an SEO/AEO/GEO optimized reply using Gemini API tailored to the specific location.
  */
-function generateReply(review) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${CONFIG.GEMINI_MODEL}:generateContent?key=${CONFIG.GEMINI_API_KEY}`;
+function generateReply(review, location, apiKey, model) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   
   const starRatingMap = {
     'ONE': 1, 'TWO': 2, 'THREE': 3, 'FOUR': 4, 'FIVE': 5
@@ -113,7 +142,12 @@ function generateReply(review) {
   const stars = starRatingMap[review.starRating] || 5;
   const reviewText = review.comment || 'No text provided by the customer.';
   
-  let prompt = `You are the customer service representative for AME Bazaar, a premium offline family garment retail store located in Kirari, Delhi.\n\n`;
+  // Parse keywords into a string
+  const keywordsString = Array.isArray(location.seoKeywords) 
+    ? location.seoKeywords.join(', ') 
+    : location.seoKeywords;
+  
+  let prompt = `You are the customer service representative for ${location.businessName}, a ${location.businessType}.\n\n`;
   prompt += `A customer left a ${stars}-star review on Google My Business.\n`;
   prompt += `Customer Review: "${reviewText}"\n\n`;
   
@@ -122,11 +156,11 @@ function generateReply(review) {
     prompt += `- Express gratitude for the positive feedback.\n`;
     prompt += `- Mention the specific product or service if they included it in their review.\n`;
     prompt += `- Structure sentences clearly and factually for AEO/GEO (Answer Engine Optimization / Generative Engine Optimization) so AI bots easily associate our business entities.\n`;
-    prompt += `- Incorporate the following Local SEO keywords naturally and softly: "AME Bazaar", "Kirari, Delhi", "Family Garments Store". Do not stuff keywords.\n`;
+    prompt += `- Incorporate the following Local SEO keywords naturally and softly: "${location.businessName}", ${keywordsString}. Do not stuff keywords.\n`;
   } else {
     prompt += `- Apologize professionally and empathetically for their experience.\n`;
-    prompt += `- STRICTLY AVOID using any SEO keywords (do not mention "AME Bazaar", "Kirari", "Delhi", "Family Garments Store") so we do not rank for negative search terms.\n`;
-    prompt += `- Provide the support number (${CONFIG.SUPPORT_NUMBER}) and ask them to contact us to resolve the issue offline.\n`;
+    prompt += `- STRICTLY AVOID using any SEO keywords (do not mention the business name "${location.businessName}" or any of these keywords: ${keywordsString}) so we do not rank for negative search terms.\n`;
+    prompt += `- Provide the support number (${location.supportNumber}) and ask them to contact us to resolve the issue offline.\n`;
   }
   
   prompt += `- Keep the reply concise and professional.\n`;
@@ -196,11 +230,21 @@ function postReviewReply(reviewName, replyText) {
 }
 
 /**
- * Utility function to reset the last processed review ID.
+ * Utility function to reset the last processed review IDs for all locations in config.
  * Run this manually if you want to start processing from scratch.
- * (Note: The script skips reviews that already have a reply anyway.)
  */
-function resetLastProcessedReviewId() {
-  PropertiesService.getScriptProperties().deleteProperty('LAST_PROCESSED_REVIEW_ID');
-  Logger.log('Reset LAST_PROCESSED_REVIEW_ID');
+function resetAllLastProcessedReviewIds() {
+  const scriptProperties = PropertiesService.getScriptProperties();
+  const configString = scriptProperties.getProperty('MULTI_LOCATION_CONFIG');
+  
+  if (configString) {
+    const locations = JSON.parse(configString);
+    locations.forEach(location => {
+      const propKey = `LAST_PROCESSED_REVIEW_ID_${location.locationPath}`;
+      scriptProperties.deleteProperty(propKey);
+      Logger.log(`Reset ${propKey}`);
+    });
+  } else {
+    Logger.log('MULTI_LOCATION_CONFIG not found. Cannot reset review IDs.');
+  }
 }
