@@ -256,32 +256,32 @@ function resetAllLastProcessedReviewIds() {
 function setupEnvironmentProperties() {
   const config = [
     {
-      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/AME_BAZAAR_LOCATION_ID",
+      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/AME_BAZAAR_ID",
       "businessName": "AME Bazaar",
       "businessType": "Retail Garment Store",
       "seoKeywords": ["AME Bazaar", "Family Garments Store in Kirari", "best quality affordable clothes"],
       "supportNumber": "9953569533"
     },
     {
-      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/LAW_FIRM_LOCATION_ID",
+      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/LAW_FIRM_ID",
       "businessName": "Maheshwari Counsel | Advocates & Legal Consultants",
       "businessType": "Law Firm",
       "seoKeywords": ["Maheshwari Counsel", "Advocates in Delhi", "Legal Consultants", "civil and criminal lawyer"],
       "supportNumber": "YOUR_LAW_PRACTICE_NUMBER"
     },
     {
-      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/MOCK_LOCATION_3",
-      "businessName": "YOUR_BUSINESS_NAME_3",
-      "businessType": "YOUR_BUSINESS_TYPE_3",
-      "seoKeywords": ["keyword1", "keyword2"],
-      "supportNumber": "YOUR_SUPPORT_NUMBER_3"
+      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/ADVAITH_ID",
+      "businessName": "Advaith Educational Centre",
+      "businessType": "Educational Coaching Institute",
+      "seoKeywords": ["Advaith Educational Centre", "best coaching institute in Kirari", "tuition classes Delhi", "top educational center"],
+      "supportNumber": "YOUR_ADVAITH_NUMBER"
     },
     {
-      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/MOCK_LOCATION_4",
-      "businessName": "YOUR_BUSINESS_NAME_4",
-      "businessType": "YOUR_BUSINESS_TYPE_4",
-      "seoKeywords": ["keyword3", "keyword4"],
-      "supportNumber": "YOUR_SUPPORT_NUMBER_4"
+      "locationPath": "accounts/YOUR_ACCOUNT_ID/locations/SIS_SCHOOL_ID",
+      "businessName": "SIS",
+      "businessType": "School / Educational Institution",
+      "seoKeywords": ["SIS School", "best school in Kirari", "quality education Delhi", "top school admission"],
+      "supportNumber": "YOUR_SCHOOL_NUMBER"
     }
   ];
   
