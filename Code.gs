@@ -1,3 +1,18 @@
+/**
+ * GMB-REPLY - Google Apps Script
+ * Automated Review Reply System with Gemini API
+ * Safety features: Persistent State, Circuit Breaker, Rate Limiting, Dry Run
+ */
+
+// --- CONFIGURATION ---
+const MAX_GEMINI_CALLS_PER_RUN = 3;
+const COOLDOWN_DURATION_MS = 60 * 60 * 1000; // 1 hour
+const STATE_QUEUED = 'QUEUED';
+const STATE_GENERATING = 'GENERATING';
+const STATE_REPLIED = 'REPLIED';
+const STATE_FAILED = 'FAILED';
+const STATE_RETRY_WAIT = 'RETRY_WAIT';
+
 function getAccountId() {
   const url = 'https://mybusinessaccountmanagement.googleapis.com/v1/accounts';
   const token = ScriptApp.getOAuthToken();
@@ -12,20 +27,44 @@ function getAccountId() {
 }
 
 function checkNewReviews() {
+  Logger.log('--- checkNewReviews Execution Started ---');
   const scriptProperties = PropertiesService.getScriptProperties();
+  
+  // Dry run check
+  const isDryRun = scriptProperties.getProperty('GMB_REPLY_DRY_RUN') === 'true';
+  if (isDryRun) Logger.log('DRY RUN MODE ENABLED - No real API calls to Gemini or GBP Reply will be made.');
+
   const configString = scriptProperties.getProperty('MULTI_LOCATION_CONFIG');
   if (!configString) return Logger.log('MULTI_LOCATION_CONFIG not found.');
   
   const locations = JSON.parse(configString);
   const geminiApiKey = scriptProperties.getProperty('GEMINI_API_KEY');
-  if (!geminiApiKey) return Logger.log('ERROR: GEMINI_API_KEY not found.');
-  const geminiModel = scriptProperties.getProperty('GEMINI_MODEL') || 'gemini-1.5-flash';
+  if (!geminiApiKey && !isDryRun) return Logger.log('ERROR: GEMINI_API_KEY not found.');
+  
+  const geminiModel = scriptProperties.getProperty('GEMINI_MODEL') || 'gemini-1.5-flash-latest';
+  
+  // Circuit Breaker Check
+  const cooldownStr = scriptProperties.getProperty('GEMINI_COOLDOWN_UNTIL');
+  if (cooldownStr) {
+    const cooldownUntil = parseInt(cooldownStr, 10);
+    if (Date.now() < cooldownUntil) {
+      Logger.log(`CIRCUIT BREAKER ACTIVE. Skipping Gemini calls until ${new Date(cooldownUntil).toISOString()}.`);
+      return;
+    } else {
+      Logger.log('Cooldown expired. Resetting circuit breaker.');
+      scriptProperties.setProperty('GEMINI_COOLDOWN_UNTIL', '');
+    }
+  }
 
   const accountId = getAccountId();
   if (!accountId) return Logger.log('Failed to retrieve Account ID. Aborting.');
 
+  let geminiCallsMade = 0;
+  let circuitBreakerActivated = false;
+
   for (const location of locations) {
-    Logger.log(`\n--- Processing Location: ${location.businessName} ---`);
+    if (circuitBreakerActivated) break;
+    Logger.log(`\nLocation: ${location.businessName}`);
     
     const reviews = fetchLatestReviews(accountId, location.locationPath);
     if (!reviews || reviews.length === 0) {
@@ -33,28 +72,92 @@ function checkNewReviews() {
       continue;
     }
 
-    let newReviewsToProcess = [];
-    for (let i = 0; i < reviews.length; i++) {
-      if (!reviews[i].reviewReply || !reviews[i].reviewReply.comment) newReviewsToProcess.push(reviews[i]);
-    }
-
-    if (newReviewsToProcess.length === 0) {
-      Logger.log('No new reviews to process.');
+    // Process oldest unreplied reviews first
+    const unrepliedReviews = reviews.filter(r => !r.reviewReply || !r.reviewReply.comment).reverse();
+    if (unrepliedReviews.length === 0) {
+      Logger.log('No unreplied reviews to process.');
       continue;
     }
 
-    newReviewsToProcess.reverse();
-    for (const review of newReviewsToProcess) {
-      const replyText = generateReply(review, location, geminiApiKey, geminiModel);
-      if (replyText) {
-        if (postReviewReply(review.name, replyText)) {
-          Logger.log(`Successfully replied to review ${review.reviewId}`);
+    for (const review of unrepliedReviews) {
+      if (circuitBreakerActivated) break;
+
+      const stateKey = `REVIEW_STATE_${review.reviewId}`;
+      const stateStr = scriptProperties.getProperty(stateKey);
+      let reviewState = stateStr ? JSON.parse(stateStr) : null;
+      
+      // State Logic
+      if (reviewState) {
+        if (reviewState.status === STATE_REPLIED) {
+          continue; // Already replied, safety net
+        }
+        if (reviewState.status === STATE_GENERATING) {
+          // It was interrupted previously. If it's been less than 1 hour, skip to prevent race conditions
+          if (Date.now() - reviewState.timestamp < 3600000) {
+            Logger.log(`Skipping review ${review.reviewId} - currently marked as GENERATING.`);
+            continue;
+          }
+        }
+        if (reviewState.status === STATE_FAILED || reviewState.status === STATE_RETRY_WAIT) {
+          if (Date.now() - reviewState.timestamp < COOLDOWN_DURATION_MS) {
+            Logger.log(`Skipping review ${review.reviewId} - waiting for cooldown to expire.`);
+            continue;
+          }
         }
       }
-      // Added 4-second delay to prevent Google Free Tier Rate Limit (HTTP 429)
-      Utilities.sleep(4000);
+
+      // Hard Limit Check
+      if (geminiCallsMade >= MAX_GEMINI_CALLS_PER_RUN) {
+        Logger.log(`MAX_GEMINI_CALLS_PER_RUN (${MAX_GEMINI_CALLS_PER_RUN}) reached. Saving remaining for next execution.`);
+        return; // Exit safely
+      }
+
+      Logger.log(`Processing Review: ${review.reviewId}`);
+      
+      // Persist state BEFORE calling Gemini
+      scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_GENERATING, timestamp: Date.now() }));
+
+      if (isDryRun) {
+        Logger.log(`[DRY RUN] Would call Gemini for review ${review.reviewId}`);
+        scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_REPLIED, timestamp: Date.now() }));
+        geminiCallsMade++;
+        continue;
+      }
+
+      // 1. Generate Reply
+      const result = generateReply(review, location, geminiApiKey, geminiModel);
+      geminiCallsMade++;
+
+      if (result.error) {
+        Logger.log(`Gemini API Error: ${result.status} - ${result.error}`);
+        scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_FAILED, timestamp: Date.now() }));
+        
+        // Trigger Circuit Breaker on quota/auth/model errors
+        if ([429, 403, 404, 500, 503].includes(result.status)) {
+          Logger.log(`ACTIVATING CIRCUIT BREAKER due to HTTP ${result.status}`);
+          scriptProperties.setProperty('GEMINI_COOLDOWN_UNTIL', (Date.now() + COOLDOWN_DURATION_MS).toString());
+          circuitBreakerActivated = true;
+          break; // Stop location loop
+        }
+      } else if (result.text) {
+        // 2. Post Reply
+        if (postReviewReply(review.name, result.text)) {
+          scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_REPLIED, timestamp: Date.now() }));
+          Logger.log(`Successfully replied to review ${review.reviewId}`);
+        } else {
+          Logger.log(`Failed to post reply to GBP for review ${review.reviewId}`);
+          scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_RETRY_WAIT, timestamp: Date.now() }));
+        }
+      } else {
+        Logger.log(`Unknown Gemini failure for review ${review.reviewId}`);
+        scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_FAILED, timestamp: Date.now() }));
+      }
+
+      // Secondary protection delay
+      if (!isDryRun) Utilities.sleep(4000);
     }
   }
+  Logger.log('--- checkNewReviews Execution Finished ---');
 }
 
 function fetchLatestReviews(accountId, locationPath) {
@@ -68,10 +171,11 @@ function fetchLatestReviews(accountId, locationPath) {
 }
 
 function generateReply(review, location, apiKey, model) {
-  // Default to the stable latest flash model if not defined in properties
-  let formattedModel = model || 'gemini-1.5-flash-latest';
-  
-  // Ensure the model string is prefixed correctly for the v1beta endpoint
+  // Validate and format model string securely
+  let formattedModel = (model || 'gemini-1.5-flash-latest').trim();
+  if (formattedModel === '' || !/^[a-zA-Z0-9.\-]+$/.test(formattedModel.replace('models/', ''))) {
+    return { error: 'Invalid model format in properties', status: 400 };
+  }
   if (!formattedModel.startsWith('models/')) {
     formattedModel = 'models/' + formattedModel;
   }
@@ -95,10 +199,18 @@ function generateReply(review, location, apiKey, model) {
   
   try {
     const response = UrlFetchApp.fetch(url, options);
-    const json = JSON.parse(response.getContentText());
-    if (response.getResponseCode() === 200 && json.candidates) return json.candidates[0].content.parts[0].text.trim();
-  } catch (e) { Logger.log('Error: ' + e.toString()); }
-  return null;
+    const code = response.getResponseCode();
+    if (code === 200) {
+      const json = JSON.parse(response.getContentText());
+      if (json.candidates && json.candidates.length > 0) {
+        return { text: json.candidates[0].content.parts[0].text.trim(), status: 200 };
+      }
+      return { error: 'No candidates in response', status: 500 };
+    }
+    return { error: response.getContentText(), status: code };
+  } catch (e) { 
+    return { error: e.toString(), status: 500 };
+  }
 }
 
 function postReviewReply(reviewName, replyText) {
