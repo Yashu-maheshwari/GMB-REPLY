@@ -26,8 +26,6 @@ function checkNewReviews() {
 
   for (const location of locations) {
     Logger.log(`\n--- Processing Location: ${location.businessName} ---`);
-    const propKey = `LAST_PROCESSED_REVIEW_ID_${location.locationPath}`;
-    const lastProcessedReviewId = scriptProperties.getProperty(propKey);
     
     const reviews = fetchLatestReviews(accountId, location.locationPath);
     if (!reviews || reviews.length === 0) {
@@ -37,7 +35,6 @@ function checkNewReviews() {
 
     let newReviewsToProcess = [];
     for (let i = 0; i < reviews.length; i++) {
-      if (reviews[i].reviewId === lastProcessedReviewId) break;
       if (!reviews[i].reviewReply || !reviews[i].reviewReply.comment) newReviewsToProcess.push(reviews[i]);
     }
 
@@ -51,7 +48,6 @@ function checkNewReviews() {
       const replyText = generateReply(review, location, geminiApiKey, geminiModel);
       if (replyText) {
         if (postReviewReply(review.name, replyText)) {
-          scriptProperties.setProperty(propKey, review.reviewId);
           Logger.log(`Successfully replied to review ${review.reviewId}`);
         }
       }
