@@ -261,3 +261,16 @@ function setupEnvironmentProperties() {
   PropertiesService.getScriptProperties().setProperty('MULTI_LOCATION_CONFIG', JSON.stringify(config));
   Logger.log('Config injected.');
 }
+
+function verifySafetyConfiguration() {
+  const props = PropertiesService.getScriptProperties().getProperties();
+
+  Logger.log('=== GMB-REPLY SAFETY VERIFICATION ===');
+  Logger.log('DRY_RUN: ' + (props['GMB_REPLY_DRY_RUN'] || 'NOT SET'));
+  Logger.log('GEMINI_MODEL: ' + (props['GEMINI_MODEL'] || 'DEFAULT'));
+  Logger.log('MULTI_LOCATION_CONFIG: ' + (props['MULTI_LOCATION_CONFIG'] ? 'PRESENT' : 'MISSING'));
+  Logger.log('GEMINI_API_KEY: ' + (props['GEMINI_API_KEY'] ? 'PRESENT' : 'MISSING'));
+  Logger.log('GEMINI_COOLDOWN_UNTIL: ' + (props['GEMINI_COOLDOWN_UNTIL'] || 'NOT ACTIVE'));
+  Logger.log('MAX_GEMINI_CALLS_PER_RUN: ' + MAX_GEMINI_CALLS_PER_RUN);
+  Logger.log('=== NO EXTERNAL API CALLS MADE ===');
+}
