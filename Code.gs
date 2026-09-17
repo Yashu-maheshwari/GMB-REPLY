@@ -128,19 +128,15 @@ function checkNewReviews() {
 
       Logger.log(`Processing Review: ${review.reviewId} (Attempt ${reviewState.attemptCount + 1})`);
       
+      if (isDryRun) {
+        Logger.log(`[DRY RUN] Would call Gemini and post GBP reply for review ${review.reviewId}`);
+        continue;
+      }
+
       // Persist state BEFORE calling Gemini
       reviewState.status = STATE_GENERATING;
       reviewState.timestamp = Date.now();
       setProp(stateKey, JSON.stringify(reviewState));
-
-      if (isDryRun) {
-        Logger.log(`[DRY RUN] Would call Gemini for review ${review.reviewId}`);
-        reviewState.status = STATE_REPLIED;
-        reviewState.timestamp = Date.now();
-        setProp(stateKey, JSON.stringify(reviewState));
-        geminiCallsMade++;
-        continue;
-      }
 
       // 1. Generate Reply
       const result = generateReply(review, location, geminiApiKey, geminiModel);
