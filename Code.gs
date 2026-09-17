@@ -190,12 +190,34 @@ function checkNewReviews() {
 
 function fetchLatestReviews(accountId, locationPath) {
   const locId = locationPath.split('/').pop();
-  const url = `https://mybusiness.googleapis.com/v4/${accountId}/locations/${locId}/reviews`;
-  const options = { method: 'get', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
-  const response = UrlFetchApp.fetch(url, options);
-  if (response.getResponseCode() === 200) return JSON.parse(response.getContentText()).reviews || [];
-  Logger.log(`Error fetching reviews: ` + response.getContentText());
-  return [];
+  let allReviews = [];
+  let nextPageToken = null;
+  let pageCount = 0;
+  const MAX_PAGES = 50; // Infinite loop protection
+  
+  do {
+    let url = `https://mybusiness.googleapis.com/v4/${accountId}/locations/${locId}/reviews`;
+    if (nextPageToken) {
+      url += `?pageToken=${encodeURIComponent(nextPageToken)}`;
+    }
+    
+    const options = { method: 'get', headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true };
+    const response = UrlFetchApp.fetch(url, options);
+    
+    if (response.getResponseCode() === 200) {
+      const json = JSON.parse(response.getContentText());
+      if (json.reviews && Array.isArray(json.reviews)) {
+        allReviews = allReviews.concat(json.reviews);
+      }
+      nextPageToken = json.nextPageToken;
+    } else {
+      Logger.log(`Error fetching reviews (Page ${pageCount + 1}): ` + response.getContentText());
+      break;
+    }
+    pageCount++;
+  } while (nextPageToken && pageCount < MAX_PAGES);
+  
+  return allReviews;
 }
 
 function generateReply(review, location, apiKey, model) {
