@@ -12,6 +12,7 @@ const STATE_GENERATING = 'GENERATING';
 const STATE_REPLIED = 'REPLIED';
 const STATE_FAILED = 'FAILED';
 const STATE_RETRY_WAIT = 'RETRY_WAIT';
+const STATE_DEAD = 'DEAD';
 
 function getAccountId() {
   const url = 'https://mybusinessaccountmanagement.googleapis.com/v1/accounts';
@@ -29,22 +30,30 @@ function getAccountId() {
 function checkNewReviews() {
   Logger.log('--- checkNewReviews Execution Started ---');
   const scriptProperties = PropertiesService.getScriptProperties();
+  const allProps = scriptProperties.getProperties(); // Efficient 1-read cache
+  
+  function getProp(key) { return allProps[key]; }
+  function setProp(key, value) {
+    const strVal = String(value);
+    allProps[key] = strVal;
+    scriptProperties.setProperty(key, strVal);
+  }
   
   // Dry run check
-  const isDryRun = scriptProperties.getProperty('GMB_REPLY_DRY_RUN') === 'true';
+  const isDryRun = getProp('GMB_REPLY_DRY_RUN') === 'true';
   if (isDryRun) Logger.log('DRY RUN MODE ENABLED - No real API calls to Gemini or GBP Reply will be made.');
 
-  const configString = scriptProperties.getProperty('MULTI_LOCATION_CONFIG');
+  const configString = getProp('MULTI_LOCATION_CONFIG');
   if (!configString) return Logger.log('MULTI_LOCATION_CONFIG not found.');
   
   const locations = JSON.parse(configString);
-  const geminiApiKey = scriptProperties.getProperty('GEMINI_API_KEY');
+  const geminiApiKey = getProp('GEMINI_API_KEY');
   if (!geminiApiKey && !isDryRun) return Logger.log('ERROR: GEMINI_API_KEY not found.');
   
-  const geminiModel = scriptProperties.getProperty('GEMINI_MODEL') || 'gemini-1.5-flash-latest';
+  const geminiModel = getProp('GEMINI_MODEL') || 'gemini-1.5-flash-latest';
   
   // Circuit Breaker Check
-  const cooldownStr = scriptProperties.getProperty('GEMINI_COOLDOWN_UNTIL');
+  const cooldownStr = getProp('GEMINI_COOLDOWN_UNTIL');
   if (cooldownStr) {
     const cooldownUntil = parseInt(cooldownStr, 10);
     if (Date.now() < cooldownUntil) {
@@ -52,7 +61,7 @@ function checkNewReviews() {
       return;
     } else {
       Logger.log('Cooldown expired. Resetting circuit breaker.');
-      scriptProperties.setProperty('GEMINI_COOLDOWN_UNTIL', '');
+      setProp('GEMINI_COOLDOWN_UNTIL', '');
     }
   }
 
@@ -83,26 +92,31 @@ function checkNewReviews() {
       if (circuitBreakerActivated) break;
 
       const stateKey = `REVIEW_STATE_${review.reviewId}`;
-      const stateStr = scriptProperties.getProperty(stateKey);
-      let reviewState = stateStr ? JSON.parse(stateStr) : null;
+      const stateStr = getProp(stateKey);
+      let reviewState = stateStr ? JSON.parse(stateStr) : { status: STATE_QUEUED, attemptCount: 0, timestamp: 0 };
+      
+      // Ensure attemptCount exists
+      reviewState.attemptCount = reviewState.attemptCount || 0;
       
       // State Logic
-      if (reviewState) {
-        if (reviewState.status === STATE_REPLIED) {
-          continue; // Already replied, safety net
+      if (reviewState.status === STATE_REPLIED) {
+        continue; // Already replied, safety net
+      }
+      if (reviewState.status === STATE_DEAD) {
+        Logger.log(`Skipping review ${review.reviewId} - marked DEAD after max failed attempts.`);
+        continue;
+      }
+      if (reviewState.status === STATE_GENERATING) {
+        // It was interrupted previously. If it's been less than 1 hour, skip to prevent race conditions
+        if (Date.now() - reviewState.timestamp < 3600000) {
+          Logger.log(`Skipping review ${review.reviewId} - currently marked as GENERATING.`);
+          continue;
         }
-        if (reviewState.status === STATE_GENERATING) {
-          // It was interrupted previously. If it's been less than 1 hour, skip to prevent race conditions
-          if (Date.now() - reviewState.timestamp < 3600000) {
-            Logger.log(`Skipping review ${review.reviewId} - currently marked as GENERATING.`);
-            continue;
-          }
-        }
-        if (reviewState.status === STATE_FAILED || reviewState.status === STATE_RETRY_WAIT) {
-          if (Date.now() - reviewState.timestamp < COOLDOWN_DURATION_MS) {
-            Logger.log(`Skipping review ${review.reviewId} - waiting for cooldown to expire.`);
-            continue;
-          }
+      }
+      if (reviewState.status === STATE_FAILED || reviewState.status === STATE_RETRY_WAIT) {
+        if (Date.now() - reviewState.timestamp < COOLDOWN_DURATION_MS) {
+          Logger.log(`Skipping review ${review.reviewId} - waiting for cooldown to expire.`);
+          continue;
         }
       }
 
@@ -112,14 +126,18 @@ function checkNewReviews() {
         return; // Exit safely
       }
 
-      Logger.log(`Processing Review: ${review.reviewId}`);
+      Logger.log(`Processing Review: ${review.reviewId} (Attempt ${reviewState.attemptCount + 1})`);
       
       // Persist state BEFORE calling Gemini
-      scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_GENERATING, timestamp: Date.now() }));
+      reviewState.status = STATE_GENERATING;
+      reviewState.timestamp = Date.now();
+      setProp(stateKey, JSON.stringify(reviewState));
 
       if (isDryRun) {
         Logger.log(`[DRY RUN] Would call Gemini for review ${review.reviewId}`);
-        scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_REPLIED, timestamp: Date.now() }));
+        reviewState.status = STATE_REPLIED;
+        reviewState.timestamp = Date.now();
+        setProp(stateKey, JSON.stringify(reviewState));
         geminiCallsMade++;
         continue;
       }
@@ -127,30 +145,44 @@ function checkNewReviews() {
       // 1. Generate Reply
       const result = generateReply(review, location, geminiApiKey, geminiModel);
       geminiCallsMade++;
+      
+      reviewState.attemptCount += 1;
+      const isMaxRetries = reviewState.attemptCount >= 3;
 
       if (result.error) {
         Logger.log(`Gemini API Error: ${result.status} - ${result.error}`);
-        scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_FAILED, timestamp: Date.now() }));
+        reviewState.status = isMaxRetries ? STATE_DEAD : STATE_FAILED;
+        if (isMaxRetries) Logger.log(`Review ${review.reviewId} marked DEAD after 3 Gemini failures.`);
+        reviewState.timestamp = Date.now();
+        setProp(stateKey, JSON.stringify(reviewState));
         
         // Trigger Circuit Breaker on quota/auth/model errors
         if ([429, 403, 404, 500, 503].includes(result.status)) {
           Logger.log(`ACTIVATING CIRCUIT BREAKER due to HTTP ${result.status}`);
-          scriptProperties.setProperty('GEMINI_COOLDOWN_UNTIL', (Date.now() + COOLDOWN_DURATION_MS).toString());
+          setProp('GEMINI_COOLDOWN_UNTIL', (Date.now() + COOLDOWN_DURATION_MS).toString());
           circuitBreakerActivated = true;
           break; // Stop location loop
         }
       } else if (result.text) {
         // 2. Post Reply
         if (postReviewReply(review.name, result.text)) {
-          scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_REPLIED, timestamp: Date.now() }));
+          reviewState.status = STATE_REPLIED;
+          reviewState.timestamp = Date.now();
+          setProp(stateKey, JSON.stringify(reviewState));
           Logger.log(`Successfully replied to review ${review.reviewId}`);
         } else {
           Logger.log(`Failed to post reply to GBP for review ${review.reviewId}`);
-          scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_RETRY_WAIT, timestamp: Date.now() }));
+          reviewState.status = isMaxRetries ? STATE_DEAD : STATE_RETRY_WAIT;
+          if (isMaxRetries) Logger.log(`Review ${review.reviewId} marked DEAD after 3 GBP post failures.`);
+          reviewState.timestamp = Date.now();
+          setProp(stateKey, JSON.stringify(reviewState));
         }
       } else {
         Logger.log(`Unknown Gemini failure for review ${review.reviewId}`);
-        scriptProperties.setProperty(stateKey, JSON.stringify({ status: STATE_FAILED, timestamp: Date.now() }));
+        reviewState.status = isMaxRetries ? STATE_DEAD : STATE_FAILED;
+        if (isMaxRetries) Logger.log(`Review ${review.reviewId} marked DEAD after 3 unknown failures.`);
+        reviewState.timestamp = Date.now();
+        setProp(stateKey, JSON.stringify(reviewState));
       }
 
       // Secondary protection delay
